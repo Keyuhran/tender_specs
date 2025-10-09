@@ -4,6 +4,7 @@ const path = require('path');
 const dotenv = require('dotenv');
 const helmet = require('helmet');
 const pdf = require('pdf-parse')
+const ETL = require('./data_rules')
 
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
@@ -44,6 +45,29 @@ function verifySignature(req, res, next) {
   }
 }
 
+// Global variable to store transformedData
+let transformedData = null;
+
+// Helper function to send transformedData to webhook
+async function sendTransformedDataWebhook(data) {
+  const WEBHOOK_URL = "https://plumber.gov.sg/webhooks/4acce619-2b72-4b05-9d97-46a70fd664a3";
+  if (!WEBHOOK_URL || !data) return;
+  try {
+    const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+    const response = await fetch(WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      console.error('Webhook failed:', text);
+    }
+  } catch (err) {
+    console.error('Error sending webhook:', err);
+  }
+}
+
 app.post('/submissions', verifySignature, async (req, res) => {
   try {
     // 1) Decrypt + fetch attachments immediately (S3 URLs expire ~1h)
@@ -57,8 +81,20 @@ app.post('/submissions', verifySignature, async (req, res) => {
       return res.status(422).json({ message: 'Unprocessable: decryption failed' });
     }
 
-    const { content, attachments } = submission; // { content: {responses, verified?}, attachments: {fieldId: {filename, content: Uint8Array}} }
+    // Print the entire decrypted submission for inspection
+    console.log('Full decrypted submission:', JSON.stringify(submission, null, 2));
+
+    const { content, attachments } = submission;
     const responses = content?.responses ?? [];
+    // Extract email from responses
+    let email = null;
+    for (const r of responses) {
+      if (r && r.question && typeof r.question === 'string' && r.question.toLowerCase().includes('email')) {
+        email = r.answer;
+        break;
+      }
+    }
+
     const idToQuestion = new Map(
       responses
         .filter((r) => r && typeof r === 'object')
@@ -85,7 +121,18 @@ app.post('/submissions', verifySignature, async (req, res) => {
         try {
           // Direct OCR/text extraction in memory
           const data = await pdf(buf)
-          console.log(`extracted text from ${filename}:\n`, data.text.slice(0, 5000000)) // limit preview
+          extractedText = data.text
+          console.log(`extracted text from ${filename}:\n`, data.text.slice(0, 100)) // limit preview // limit preview
+          transformedData = ETL.testETL(extractedText)
+          // Prepare outbound payload with email and extracted fields
+          let outbound = {
+            email,
+            nameOfCompany: transformedData[0]?.nameOfCompany || '',
+            uen: transformedData[0]?.uen || '',
+            incorporationDate: transformedData[0]?.incorporationDate || ''
+          };
+          // Automatically send webhook after transformation
+          await sendTransformedDataWebhook(outbound)
 
           // TODO: send to your downstream pipeline here (LLM, DB, etc.)
         } catch (err) {
@@ -111,3 +158,4 @@ app.post('/submissions', verifySignature, async (req, res) => {
 app.listen(port, '0.0.0.0', () => {
   console.log(`Server running on port ${port}`);
 });
+
