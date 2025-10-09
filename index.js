@@ -81,9 +81,6 @@ app.post('/submissions', verifySignature, async (req, res) => {
       return res.status(422).json({ message: 'Unprocessable: decryption failed' });
     }
 
-    // Print the entire decrypted submission for inspection
-    console.log('Full decrypted submission:', JSON.stringify(submission, null, 2));
-
     const { content, attachments } = submission;
     const responses = content?.responses ?? [];
     // Extract email from responses
@@ -158,4 +155,5 @@ app.post('/submissions', verifySignature, async (req, res) => {
 app.listen(port, '0.0.0.0', () => {
   console.log(`Server running on port ${port}`);
 });
+
 
