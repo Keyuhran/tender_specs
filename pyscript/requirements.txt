@@ -1,0 +1,6 @@
+flask
+formsg-python-sdk
+dotenv
+python-dotenv
+typing-extensions>=4.10.0
+gunicorn

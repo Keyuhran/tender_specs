@@ -1,0 +1,17 @@
+# This Dockerfile is for a FastAPI application that uses Python 3.11 and installs dependencies from a requirements.txt file. For python-backend
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install dependencies
+#ARG CACHEBUST=1 # Uncomment this line to force cache busting during builds
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+
+# Copy the rest of the application code
+COPY . .
+
+
+
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:3000", "test:app"]
