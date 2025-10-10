@@ -23,7 +23,7 @@ const formsg = require('@opengovsg/formsg-sdk')({ mode: 'production' });
 const formSecretKey = process.env.FORM_SECRET_KEY;
 
 // Keep body limit modest; webhook JSON is small (attachments are fetched by SDK)
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: '40mb' }));
 
 // Simple health
 app.get('/', (_req, res) => res.send('Server is running!'));
