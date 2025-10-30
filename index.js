@@ -11,19 +11,17 @@ dotenv.config({ path: path.resolve(__dirname, '.env') });
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Security & JSON
-app.set('trust proxy', true);
+
 app.use(helmet());
 
-// IMPORTANT: This must be the exact public HTTPS URL that FormSG calls.
-// It must match what you configured in the FormSG dashboard (scheme, host, path).
+
 const POST_URI = 'https://tender-specs.app.tc1.airbase.sg/submissions';
 
 const formsg = require('@opengovsg/formsg-sdk')({ mode: 'production' });
 const formSecretKey = process.env.FORM_SECRET_KEY;
 
-// Keep body limit modest; webhook JSON is small (attachments are fetched by SDK)
-app.use(express.json({ limit: '40mb' }));
+
+app.use(express.json({ limit: '10mb' }));
 
 // Simple health
 app.get('/', (_req, res) => res.send('Server is running!'));
@@ -101,7 +99,7 @@ app.post('/submissions', verifySignature, async (req, res) => {
     console.log(`decrypt_ok responses=${responses.length} attachments=${attachments ? Object.keys(attachments).length : 0}`);
 
     // 2) Persist attachments (optional)
-    const MAX_BYTES = 50 * 1024 * 1024; // 50MB
+    
     const savedFiles = [];
     if (attachments && typeof attachments === 'object') {
       for (const [fieldId, meta] of Object.entries(attachments)) {

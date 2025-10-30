@@ -1,3 +1,5 @@
 .env
 npm
 node_modules
+test_script_pub.sh
+Employee_and_Company_Lists.pdf
