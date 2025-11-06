@@ -10,9 +10,11 @@
   "license": "ISC",
   "dependencies": {
     "@opengovsg/formsg-sdk": "^0.15.0",
+    "axios": "^1.13.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "form-data": "^4.0.4",
     "fs": "^0.0.1-security",
     "helmet": "^8.1.0",
     "multer": "^2.0.2",
