@@ -7,6 +7,7 @@
 //     }
 //   }
 // };
+const names = ['james', 'adam']
 
 function ETLfunc(ocrResponse) {
   const out = { employeeNames: [], companyNames: [] };
@@ -77,12 +78,58 @@ function ETLfunc(ocrResponse) {
   return out;
 }
 
-// console.log(ETLfunc(input));
-// if (require.main === module) {
-//   console.log('Testing ETL with sample input...');
-//   console.log('Input:', JSON.stringify(input, null, 2));
-//   const result = ETLfunc(input);
-//   console.log('Output:', JSON.stringify(result, null, 2));
-// }
+function countDuplicates(arr) {
+  const freq = new Map();
+  for (const x of arr) freq.set(x, (freq.get(x) || 0) + 1);
 
-module.exports = { ETLfunc };
+  const names = [];
+  for (const [val, c] of freq) if (c > 1) names.push(val);
+
+  return { count: names.length, names };
+}
+    
+countDuplicates(names);
+
+// Test section that runs when file is executed directly
+if (require.main === module) {
+  // Test data matching real OCR response structure
+//   const testInput = {
+//     document: {
+//       formatted: {
+//         response: {
+//           value: JSON.stringify({
+//             employee_names: "James Smith, John Doe, James Smith, Mary Wong, John Doe, Peter Pan",
+//             company_names: "Tech Corp, Acme Inc, Tech Corp, New Corp, Acme Inc, Tech Corp"
+//           })
+//         }
+//       }
+//     }
+//   };
+
+  console.log('=== Testing ETL and Duplicate Detection ===');
+  
+  // Test ETL
+  console.log('\nProcessing sample OCR response:');
+  const etlResult = ETLfunc(testInput);
+  console.log('Extracted names:', etlResult);
+
+  // Test duplicate counting
+  console.log('\nAnalyzing duplicates:');
+  const employeeDups = countDuplicates(etlResult.employeeNames);
+  const companyDups = countDuplicates(etlResult.companyNames);
+
+  // Show expected webhook payload format
+  const samplePayload = {
+    email: "test@example.com",
+    employeeDuplicatesCount: employeeDups.count,
+    employeeDuplicateNames: employeeDups.names,
+    companyDuplicatesCount: companyDups.count,
+    companyDuplicateNames: companyDups.names
+  };
+
+  console.log('\nExpected webhook payload format:', JSON.stringify(samplePayload, null, 2));
+}
+
+module.exports = { ETLfunc,
+    countDuplicates
+};

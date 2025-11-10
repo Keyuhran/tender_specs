@@ -32,6 +32,59 @@ const formSecretKey = process.env.FORM_SECRET_KEY;
 
 app.use(express.json({ limit: '10mb' }));
 
+async function processAttachmentWithOCR(filename, apiKey) {
+  const url = 'https://api.read-dev.pic.net.sg/v1/extract';                 
+  const modelType = 'extract_general';                 // -F "model_type=extract_general"
+  const processorId = 'VLM';                           // -F "processor_id=VLM"
+  const dataClassification = 'rsn';                    // -F "data_classification=rsn"
+  const vlmPrompt = [                                  // will be JSON.stringified
+    { key: 'employee_names', description: 'Extract all employee names, each individual name should be seperated by a comma', type: 'string' },
+    { key: 'company_names',  description: 'Extract all company names, each individual name should be seperated by a comma', type: 'string' },
+  ];
+
+  if (!filename || !fs.existsSync(filename)) {
+    throw new Error('Missing or invalid file path');
+  }
+  if (!apiKey) {
+    throw new Error('Missing API key');
+  }
+
+  const form = new FormData();
+  form.append('file', fs.createReadStream(filename));              // -F "file=@${filename}"
+  form.append('model_type', modelType);                            // -F "model_type=extract_general"
+  form.append('processor_id', processorId);                        // -F "processor_id=VLM"
+  form.append('vlm_prompt', JSON.stringify(vlmPrompt));            // -F "vlm_prompt=${vlm_prompt}"
+  form.append('data_classification', dataClassification);          // -F "data_classification=rsn"
+
+  console.time('request');
+  try {
+    const response = await axios.post(url, form, {
+      headers: {
+        ...form.getHeaders(),
+        Authorization: `Bearer ${apiKey}`,                         // -H "Authorization: Bearer ${API_KEY}"
+      },
+      maxBodyLength: Infinity,
+    });
+
+    console.timeEnd('request');
+    console.log('Status:', response.status, response.statusText);
+    console.log(
+      'Response:',
+      typeof response.data === 'string' ? response.data : JSON.stringify(response.data, null, 2)
+    );
+    return response.data;
+  } catch (err) {
+    console.timeEnd('request');
+    if (err.response) {
+      console.error('Error status:', err.response.status, err.response.statusText);
+      console.error('Body:', err.response.data);
+    } else {
+      console.error('Request error:', err.message);
+    }
+    throw err;
+  }
+}
+
 // Simple health
 app.get('/', (_req, res) => res.send('Server is running!'));
 
@@ -81,19 +134,19 @@ class BatchProcessor {
     this.timeoutMs = timeoutMs;
     this.timer = null;
     this.batch = {
-      employeeNames: new Set(),
-      companyNames: new Set(),
+      employeeNames: [], // Changed from Set to Array
+      companyNames: [], // Changed from Set to Array
       email: null
     };
   }
 
   addData(data) {
-    // Add new names to sets (deduplicates automatically)
+    // Add all names to arrays (keeping duplicates)
     if (data.employeeNames) {
-      data.employeeNames.forEach(name => this.batch.employeeNames.add(name));
+        this.batch.employeeNames.push(...data.employeeNames);
     }
     if (data.companyNames) {
-      data.companyNames.forEach(name => this.batch.companyNames.add(name));
+      this.batch.companyNames.push(...data.companyNames);
     }
     // Keep the email (assume same email for batch)
     if (data.email) {
@@ -108,8 +161,8 @@ class BatchProcessor {
     this.timer = setTimeout(() => this.sendBatch(), this.timeoutMs);
     
     console.log('Added to batch, names so far:', {
-      employeeCount: this.batch.employeeNames.size,
-      companyCount: this.batch.companyNames.size
+      employeeCount: this.batch.employeeNames.length,
+      companyCount: this.batch.companyNames.length
     });
   }
 
@@ -119,23 +172,30 @@ class BatchProcessor {
       this.timer = null;
     }
 
+    // Use arrays directly (no need to convert from Set)
+    const { count: empDupCount, names: empDupNames } = ETL.countDuplicates(this.batch.employeeNames);
+    const { count: compDupCount, names: compDupNames } = ETL.countDuplicates(this.batch.companyNames);
+
+    // Match test case payload format exactly and include email
     const payload = {
       email: this.batch.email,
-      employeeNames: Array.from(this.batch.employeeNames),
-      companyNames: Array.from(this.batch.companyNames)
+      employeeDuplicatesCount: empDupCount,
+      employeeDuplicateNames: empDupNames,
+      companyDuplicatesCount: compDupCount,
+      companyDuplicateNames: compDupNames
     };
 
-    console.log('Sending consolidated batch:', payload);
+    console.log('Sending webhook payload:', JSON.stringify(payload, null, 2));
     
     try {
-      await sendTransformedDataWebhook(payload);
+      await sendTransformedDataWebhook(payload); 
     } catch (err) {
       console.error('Failed to send batch:', err);
     }
 
-    // Clear batch after sending
-    this.batch.employeeNames.clear();
-    this.batch.companyNames.clear();
+    // Clear arrays after sending
+    this.batch.employeeNames = [];
+    this.batch.companyNames = [];
     this.batch.email = null;
   }
 }
@@ -204,7 +264,7 @@ app.post('/submissions', verifySignature, async (req, res) => {
           
           // Add to batch instead of sending immediately
           batchProcessor.addData({
-            email,
+            email, // Fixed: Include email
             employeeNames,
             companyNames
           });
@@ -234,61 +294,6 @@ app.post('/submissions', verifySignature, async (req, res) => {
     return res.status(500).json({ message: 'Internal server error' });
   }
 });
-
-
-async function processAttachmentWithOCR(filename, apiKey) {
-  const url = 'https://api.read-dev.pic.net.sg/v1/extract';                 
-  const modelType = 'extract_general';                 // -F "model_type=extract_general"
-  const processorId = 'VLM';                           // -F "processor_id=VLM"
-  const dataClassification = 'rsn';                    // -F "data_classification=rsn"
-  const vlmPrompt = [                                  // will be JSON.stringified
-    { key: 'employee_names', description: 'Extract all employee names', type: 'string' },
-    { key: 'company_names',  description: 'Extract all company names', type: 'string' },
-  ];
-
-  if (!filename || !fs.existsSync(filename)) {
-    throw new Error('Missing or invalid file path');
-  }
-  if (!apiKey) {
-    throw new Error('Missing API key');
-  }
-
-  const form = new FormData();
-  form.append('file', fs.createReadStream(filename));              // -F "file=@${filename}"
-  form.append('model_type', modelType);                            // -F "model_type=extract_general"
-  form.append('processor_id', processorId);                        // -F "processor_id=VLM"
-  form.append('vlm_prompt', JSON.stringify(vlmPrompt));            // -F "vlm_prompt=${vlm_prompt}"
-  form.append('data_classification', dataClassification);          // -F "data_classification=rsn"
-
-  console.time('request');
-  try {
-    const response = await axios.post(url, form, {
-      headers: {
-        ...form.getHeaders(),
-        Authorization: `Bearer ${apiKey}`,                         // -H "Authorization: Bearer ${API_KEY}"
-      },
-      maxBodyLength: Infinity,
-    });
-
-    console.timeEnd('request');
-    console.log('Status:', response.status, response.statusText);
-    console.log(
-      'Response:',
-      typeof response.data === 'string' ? response.data : JSON.stringify(response.data, null, 2)
-    );
-    return response.data;
-  } catch (err) {
-    console.timeEnd('request');
-    if (err.response) {
-      console.error('Error status:', err.response.status, err.response.statusText);
-      console.error('Body:', err.response.data);
-    } else {
-      console.error('Request error:', err.message);
-    }
-    throw err;
-  }
-}
-
 
 
 
