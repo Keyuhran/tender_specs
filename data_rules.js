@@ -1,12 +1,12 @@
-const input = {
-  "document": {
-    "formatted": {
-      "response": {
-        "value": "{\"employee_names\":\"TEST, TEST TAN, TEST LIM\",\"company_names\":\"COMPANY XYZ ONLINE, XZY ENGINEERING ASIA PTE LTD\"}"
-      }
-    }
-  }
-};
+// const input = {
+//   "document": {
+//     "formatted": {
+//       "response": {
+//         "value": "{\"employee_names\":\"TEST, TEST TAN, TEST LIM\",\"company_names\":\"COMPANY XYZ ONLINE, XZY ENGINEERING ASIA PTE LTD\"}"
+//       }
+//     }
+//   }
+// };
 
 function ETLfunc(ocrResponse) {
   const out = { employeeNames: [], companyNames: [] };
@@ -77,12 +77,12 @@ function ETLfunc(ocrResponse) {
   return out;
 }
 
-console.log(ETLfunc(input));
-if (require.main === module) {
-  console.log('Testing ETL with sample input...');
-  console.log('Input:', JSON.stringify(input, null, 2));
-  const result = ETLfunc(input);
-  console.log('Output:', JSON.stringify(result, null, 2));
-}
+// console.log(ETLfunc(input));
+// if (require.main === module) {
+//   console.log('Testing ETL with sample input...');
+//   console.log('Input:', JSON.stringify(input, null, 2));
+//   const result = ETLfunc(input);
+//   console.log('Output:', JSON.stringify(result, null, 2));
+// }
 
 module.exports = { ETLfunc };

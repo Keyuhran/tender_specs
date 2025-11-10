@@ -13,6 +13,7 @@ const { promisify } = require('util');
 const writeFileAsync = promisify(fs.writeFile);
 const unlink = promisify(fs.unlink);
 
+
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const app = express();
@@ -74,6 +75,74 @@ async function sendTransformedDataWebhook(data) {
   }
 }
 
+// BatchProcessor for handling multiple files
+class BatchProcessor {
+  constructor(timeoutMs = 20000) {
+    this.timeoutMs = timeoutMs;
+    this.timer = null;
+    this.batch = {
+      employeeNames: new Set(),
+      companyNames: new Set(),
+      email: null
+    };
+  }
+
+  addData(data) {
+    // Add new names to sets (deduplicates automatically)
+    if (data.employeeNames) {
+      data.employeeNames.forEach(name => this.batch.employeeNames.add(name));
+    }
+    if (data.companyNames) {
+      data.companyNames.forEach(name => this.batch.companyNames.add(name));
+    }
+    // Keep the email (assume same email for batch)
+    if (data.email) {
+      this.batch.email = data.email;
+    }
+
+    // Reset/start timeout
+    if (this.timer) {
+      clearTimeout(this.timer);
+    }
+    
+    this.timer = setTimeout(() => this.sendBatch(), this.timeoutMs);
+    
+    console.log('Added to batch, names so far:', {
+      employeeCount: this.batch.employeeNames.size,
+      companyCount: this.batch.companyNames.size
+    });
+  }
+
+  async sendBatch() {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+
+    const payload = {
+      email: this.batch.email,
+      employeeNames: Array.from(this.batch.employeeNames),
+      companyNames: Array.from(this.batch.companyNames)
+    };
+
+    console.log('Sending consolidated batch:', payload);
+    
+    try {
+      await sendTransformedDataWebhook(payload);
+    } catch (err) {
+      console.error('Failed to send batch:', err);
+    }
+
+    // Clear batch after sending
+    this.batch.employeeNames.clear();
+    this.batch.companyNames.clear();
+    this.batch.email = null;
+  }
+}
+
+// Create single instance
+const batchProcessor = new BatchProcessor(20000); // 20 seconds
+
 app.post('/submissions', verifySignature, async (req, res) => {
   try {
     // 1) Decrypt + fetch attachments immediately (S3 URLs expire ~1h)
@@ -131,18 +200,14 @@ app.post('/submissions', verifySignature, async (req, res) => {
           const ocrResult = await processAttachmentWithOCR(filepath, process.env.OCR_API_KEY);
           console.log('OCR processing complete:', JSON.stringify(ocrResult, null, 2));
 
-          // Process OCR results through ETL and send directly to webhook
           const { employeeNames, companyNames } = ETL.ETLfunc(ocrResult);
           
-          // Send only the arrays to webhook
-          const outbound = {
+          // Add to batch instead of sending immediately
+          batchProcessor.addData({
             email,
             employeeNames,
             companyNames
-          };
-
-          console.log('Sending to webhook:', outbound);
-          await sendTransformedDataWebhook(outbound);
+          });
 
           // Cleanup temp file
           try {
