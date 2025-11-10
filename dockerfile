@@ -8,8 +8,13 @@ RUN npm install
 
 COPY . .
 
-RUN mkdir -p /app/uploads \
- && chown -R node:node /app/uploads          
+# Ensure runtime-writable tmp upload dir for Lambda-like environments
+RUN mkdir -p /tmp/uploads \
+    && chmod 1777 /tmp/uploads
 
+# (keep running as non-root user if desired)
+USER node
+
+VOLUME ["/app/uploads"]
 
 CMD ["node", "index.js"]

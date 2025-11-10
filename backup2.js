@@ -8,10 +8,10 @@ const ETL = require('./data_rules')
 const fs = require('fs');
 const axios = require('axios');
 const FormData = require('form-data');
+const util = require('util');
 const os = require('os');
-const { promisify } = require('util');
-const writeFileAsync = promisify(fs.writeFile);
-const unlink = promisify(fs.unlink);
+
+test = "hello"
 
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
@@ -28,6 +28,16 @@ const POST_URI = 'https://tender-specs.app.tc1.airbase.sg/submissions';
 const formsg = require('@opengovsg/formsg-sdk')({ mode: 'production' });
 const formSecretKey = process.env.FORM_SECRET_KEY;
 
+const writeFile = util.promisify(fs.writeFile);
+const unlink = util.promisify(fs.unlink);
+
+// ensure runtime-writable upload dir (use UPLOAD_DIR env or system tmp)
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(os.tmpdir(), 'tender_uploads');
+try {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true, mode: 0o777 });
+} catch (e) {
+  console.error('Failed to create upload dir', UPLOAD_DIR, e);
+}
 
 app.use(express.json({ limit: '10mb' }));
 
@@ -75,6 +85,7 @@ async function sendTransformedDataWebhook(data) {
 }
 
 app.post('/submissions', verifySignature, async (req, res) => {
+  const tempFiles = []; // Track files to cleanup
   try {
     // 1) Decrypt + fetch attachments immediately (S3 URLs expire ~1h)
     const HAS_ATTACHMENTS = true;
@@ -123,32 +134,63 @@ app.post('/submissions', verifySignature, async (req, res) => {
 
         try {
           // Save file to disk (use runtime-writable upload dir)
-          const filepath = path.join(os.tmpdir(), filename);
-          await writeFileAsync(filepath, buf);
-          
-          // Use OCR API instead of pdf-parse
+          const filepath = path.join(UPLOAD_DIR, filename);
+          await writeFile(filepath, buf);
+          tempFiles.push(filepath);
+
+          // Process with OCR API and wait for result
           console.log('Starting OCR processing for:', filename);
           const ocrResult = await processAttachmentWithOCR(filepath, process.env.OCR_API_KEY);
-          console.log('OCR processing complete:', JSON.stringify(ocrResult, null, 2));
-
-          // Process OCR results through ETL and send directly to webhook
-          const { employeeNames, companyNames } = ETL.ETLfunc(ocrResult);
           
-          // Send only the arrays to webhook
-          const outbound = {
-            email,
-            employeeNames,
-            companyNames
-          };
 
-          console.log('Sending to webhook:', outbound);
-          await sendTransformedDataWebhook(outbound);
+          // Enhanced OCR result logging and validation
+          console.log('OCR Result Type:', typeof ocrResult);
+          console.log('OCR Result Keys:', ocrResult ? Object.keys(ocrResult) : 'null');
+          console.log('Full OCR Result:', JSON.stringify(ocrResult, null, 2));
+          
+          // Check if result exists and has either a direct value or nested value
+          if (!ocrResult) {
+            console.error('OCR result is null or undefined');
+            continue;
+          }
 
-          // Cleanup temp file
+          let valueToProcess;
+          if (typeof ocrResult === 'string') {
+            valueToProcess = ocrResult;
+          } else if (ocrResult.value) {
+            valueToProcess = ocrResult.value;
+          } else if (ocrResult.data && ocrResult.data.value) {
+            valueToProcess = ocrResult.data.value;
+          } else {
+            console.error('Could not find value field in OCR result. Structure:', JSON.stringify(ocrResult, null, 2));
+            continue;
+          }
+
           try {
-            await unlink(filepath);
-          } catch (cleanupErr) {
-            console.error('Failed to cleanup file:', filepath, cleanupErr);
+            // If valueToProcess is already an object, use it directly
+            const valueObj = typeof valueToProcess === 'object' 
+              ? valueToProcess 
+              : JSON.parse(valueToProcess);
+            
+            console.log('Parsed value object:', valueObj);
+            
+            // Manual extraction as fallback
+            const emp = valueObj.employee_names?.split(',').map(n => n.trim()).filter(Boolean) || [];
+            const comp = valueObj.company_names?.split(',').map(n => n.trim()).filter(Boolean) || [];
+            
+            console.log('Extracted names:', { emp, comp });
+
+            // Clean outbound payload (no rawOcr)
+            const outbound = {
+              test
+            };
+
+            // Log the exact payload being sent
+            console.log('Final webhook payload:', JSON.stringify(outbound));
+            await sendTransformedDataWebhook(outbound);
+
+          } catch (parseErr) {
+            console.error('Failed to parse OCR value:', parseErr);
           }
 
         } catch (err) {
@@ -167,6 +209,15 @@ app.post('/submissions', verifySignature, async (req, res) => {
   } catch (err) {
     console.error('Error processing submission:', err);
     return res.status(500).json({ message: 'Internal server error' });
+  } finally {
+    // Cleanup temp files
+    for (const file of tempFiles) {
+      try {
+        await unlink(file);
+      } catch (err) {
+        console.error(`Failed to delete temp file ${file}:`, err);
+      }
+    }
   }
 });
 
@@ -224,8 +275,8 @@ async function processAttachmentWithOCR(filename, apiKey) {
   }
 }
 
-
-
+// Add this helper function near the top with other constants
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // Start server
 app.listen(port, '0.0.0.0', () => {
