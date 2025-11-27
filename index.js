@@ -37,9 +37,11 @@ async function processAttachmentWithOCR(filename, apiKey) {
   const modelType = 'GENERAL';                 // -F "model_type=GENERAL"
   const processorId = 'VLM';                           // -F "processor_id=VLM"
   const dataClassification = 'RSN';                    // -F "data_classification=RSN"
-  const vlmPrompt = [                                  // will be JSON.stringified
+  const vlmPrompt = [     
+    { key: 'ic_numbers',  description: 'Return all identification numbers of employees from the document, each individual number should be seperated by a comma ', type: 'string' },
     { key: 'employee_names', description: 'Extract all employee names, each individual name should be seperated by a comma', type: 'string' },
-    { key: 'company_names',  description: 'Extract all company names, each individual name should be seperated by a comma', type: 'string' },
+    { key: 'company_names',  description: 'Extract all company names, each individual name should be seperated by a comma. Ignore the company: ACCOUNTING AND CORPORATE REGULATORY AUTHORITY (ACRA)', type: 'string' },
+
   ];
 
   if (!filename || !fs.existsSync(filename)) {
@@ -142,19 +144,24 @@ class BatchProcessor {
     this.timeoutMs = timeoutMs;
     this.timer = null;
     this.batch = {
-      employeeNames: [], // Changed from Set to Array
-      companyNames: [], // Changed from Set to Array
+      employeeNames: [], // keep duplicates
+      companyNames: [], // keep duplicates
+      icNumbers: [], // NEW: collect all identification numbers (duplicates kept)
       email: null
     };
   }
 
   addData(data) {
-    // Add all names to arrays 
+    // Add all names to arrays (keeping duplicates)
     if (data.employeeNames) {
-        this.batch.employeeNames.push(...data.employeeNames);
+      this.batch.employeeNames.push(...data.employeeNames);
     }
     if (data.companyNames) {
       this.batch.companyNames.push(...data.companyNames);
+    }
+    // Add icNumbers if provided
+    if (data.icNumbers) {
+      this.batch.icNumbers.push(...data.icNumbers);
     }
     // Keep the email (assume same email for batch)
     if (data.email) {
@@ -170,7 +177,8 @@ class BatchProcessor {
     
     console.log('Added to batch, names so far:', {
       employeeCount: this.batch.employeeNames.length,
-      companyCount: this.batch.companyNames.length
+      companyCount: this.batch.companyNames.length,
+      icCount: this.batch.icNumbers.length
     });
   }
 
@@ -180,23 +188,30 @@ class BatchProcessor {
       this.timer = null;
     }
 
-    // Use arrays directly (no need to convert from Set)
+    // Use arrays directly for duplicate analysis
     const { count: empDupCount, names: empDupNames } = ETL.countDuplicates(this.batch.employeeNames);
     const { count: compDupCount, names: compDupNames } = ETL.countDuplicates(this.batch.companyNames);
+    const { count: icDupCount, names: icDupNames } = ETL.countDuplicates(this.batch.icNumbers);
 
+    // yes/no for ic duplicates
+    const icDuplicatesYesNo = icDupCount > 0 ? 'yes' : 'no';
+
+    // Match test case payload format - include icDuplicatesYesNo and optional list
     const payload = {
       email: this.batch.email,
       employeeDuplicatesCount: empDupCount,
       employeeDuplicateNames: empDupNames,
       companyDuplicatesCount: compDupCount,
-      companyDuplicateNames: compDupNames
+      companyDuplicateNames: compDupNames,
+      icDuplicates: icDuplicatesYesNo
+      // optionally: icDuplicateNames: icDupNames
     };
 
     console.log('Sending webhook payload:', JSON.stringify(payload, null, 2));
     
     try {
       await sendTransformedDataWebhook(payload);
-
+      
       // After successful send: remove all files written to UPLOAD_DIR
       try {
         const files = await fs.promises.readdir(UPLOAD_DIR);
@@ -217,10 +232,13 @@ class BatchProcessor {
       console.log('Clearing batch data...');
       this.batch.employeeNames = [];
       this.batch.companyNames = [];
+      this.batch.icNumbers = [];
       this.batch.email = null;
+      
       console.log('Batch cleared. Current counts:', {
         employeeNames: this.batch.employeeNames.length,
-        companyNames: this.batch.companyNames.length
+        companyNames: this.batch.companyNames.length,
+        icNumbers: this.batch.icNumbers.length
       });
     } catch (err) {
       console.error('Failed to send batch:', err);
@@ -288,13 +306,14 @@ app.post('/submissions', verifySignature, async (req, res) => {
           const ocrResult = await processAttachmentWithOCR(filepath, process.env.OCR_API_KEY);
           console.log('OCR processing complete:', JSON.stringify(ocrResult, null, 2));
 
-          const { employeeNames, companyNames } = ETL.ETLfunc(ocrResult);
+          const { employeeNames, companyNames, icNumbers } = ETL.ETLfunc(ocrResult);
           
           // Add to batch instead of sending immediately
           batchProcessor.addData({
-            email, // Fixed: Include email
+            email, // Include email
             employeeNames,
-            companyNames
+            companyNames,
+            icNumbers // NEW
           });
 
           // Cleanup temp file

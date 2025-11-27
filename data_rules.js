@@ -1,52 +1,43 @@
-// const testInput = {
-//   "document": {
-//     "formatted": {
-//       "response": {
-//         "value": "{\"employee_names\":\"TEST, TEST TAN, TEST LIM\",\"company_names\":\"COMPANY XYZ ONLINE, XZY ENGINEERING ASIA PTE LTD\"}"
-//       }
-//     }
-//   }
-// };
 
-// const testInput2 = {
-// "document_type": null,
+const testInput = {
+"document_type": null,
 
-// "document": {
+"document": {
 
-// "value": {
+"value": {
 
-// "response": {
+"response": {
 
-// "value": "{\"employee_names\":\"LIM TAN, RYAN TIM,BRYAN LOW \",\"company_names\":\"CHARSLTON TECHNOLOGIES PTE LTD\"}",
+"value": "{\"ic_numbers\":\"S1234567C, S2142424A, T20202020\",\"employee_names\":\"LIM TAN, RYAN TIM,BRYAN LOW \",\"company_names\":\"CHARSLTON TECHNOLOGIES PTE LTD\"}",
 
-// "confidence": null
+"confidence": null
 
-// }
+}
 
-// },
+},
 
-// "confidence": null
+"confidence": null
 
-// },
+},
 
-// "metadata": {
+"metadata": {
 
-// "processing_time_seconds": 8.713,
+"processing_time_seconds": 8.713,
 
-// "file_size_mb": 0.192,
+"file_size_mb": 0.192,
 
-// "page_count": 5,
+"page_count": 5,
 
-// "model": "vlm_rsn_v1"
+"model": "vlm_rsn_v1"
 
-// }
+}
 
-// };
+};
 
-// const names = ['james', 'adam']
+
 
 function ETLfunc(ocrResponse) {
-  const out = { employeeNames: [], companyNames: [] };
+  const out = { employeeNames: [], companyNames: [], icNumbers: [] };
   if (!ocrResponse) return out;
 
   // Debug: log incoming structure
@@ -65,7 +56,7 @@ function ETLfunc(ocrResponse) {
     }
   } else if (ocrResponse?.value?.response?.value) {
     try {
-      payload = JSON.parse(ocrResponse.formatted.response.value);
+      payload = JSON.parse(ocrResponse.value.response.value);
     } catch (e) {
       console.error('Failed to parse response.value:', e);
       return out;
@@ -105,9 +96,11 @@ function ETLfunc(ocrResponse) {
   // 4) Read values with a few tolerant aliases
   const empRaw = norm.employee_names ?? norm.employee ?? norm['employee-name'] ?? '';
   const compRaw = norm.company_names  ?? norm.company  ?? norm['company-name']  ?? '';
+  const icRaw = norm.identification ?? norm.identification_number ?? norm.ic ?? norm.ic_number ?? norm.ic_numbers ?? norm['identification-number'] ?? '';
 
   out.employeeNames = toArray(empRaw);
   out.companyNames  = toArray(compRaw);
+  out.icNumbers     = toArray(icRaw);
 
   // Debug: log final output
   console.log('ETL output:', JSON.stringify(out, null, 2));
@@ -124,35 +117,24 @@ function countDuplicates(arr) {
   return { count: names.length, names };
 }
     
-countDuplicates(names);
+//countDuplicates(names);
 
 // Test section that runs when file is executed directly
 if (require.main === module) {
-  // Test data matching real OCR response structure
-//   const testInput = {
-//     document: {
-//       formatted: {
-//         response: {
-//           value: JSON.stringify({
-//             employee_names: "James Smith, John Doe, James Smith, Mary Wong, John Doe, Peter Pan",
-//             company_names: "Tech Corp, Acme Inc, Tech Corp, New Corp, Acme Inc, Tech Corp"
-//           })
-//         }
-//       }
-//     }
-//   };
+
 
   console.log('=== Testing ETL and Duplicate Detection ===');
   
   // Test ETL
   console.log('\nProcessing sample OCR response:');
-  const etlResult = ETLfunc(testInput2);
+  const etlResult = ETLfunc(testInput);
   console.log('Extracted names:', etlResult);
 
   // Test duplicate counting
   console.log('\nAnalyzing duplicates:');
   const employeeDups = countDuplicates(etlResult.employeeNames);
   const companyDups = countDuplicates(etlResult.companyNames);
+  const icDups = countDuplicates(etlResult.icNumbers);
 
   // Show expected webhook payload format
   const samplePayload = {
