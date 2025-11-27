@@ -33,10 +33,10 @@ const formSecretKey = process.env.FORM_SECRET_KEY;
 app.use(express.json({ limit: '10mb' }));
 
 async function processAttachmentWithOCR(filename, apiKey) {
-  const url = 'https://api.read-dev.pic.net.sg/v1/extract';                 
-  const modelType = 'extract_general';                 // -F "model_type=extract_general"
+  const url = 'https://api-dev.aisay.tech.gov.sg/v1/extract';                 
+  const modelType = 'GENERAL';                 // -F "model_type=GENERAL"
   const processorId = 'VLM';                           // -F "processor_id=VLM"
-  const dataClassification = 'rsn';                    // -F "data_classification=rsn"
+  const dataClassification = 'RSN';                    // -F "data_classification=RSN"
   const vlmPrompt = [                                  // will be JSON.stringified
     { key: 'employee_names', description: 'Extract all employee names, each individual name should be seperated by a comma', type: 'string' },
     { key: 'company_names',  description: 'Extract all company names, each individual name should be seperated by a comma', type: 'string' },
@@ -128,6 +128,14 @@ async function sendTransformedDataWebhook(data) {
   }
 }
 
+// ensure runtime-writable upload dir under system temp
+const UPLOAD_DIR =  path.join(os.tmpdir(), 'tender_uploads');
+try {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true, mode: 0o777 });
+} catch (e) {
+  console.error('Failed to create upload dir', UPLOAD_DIR, e);
+}
+
 // BatchProcessor for handling multiple files
 class BatchProcessor {
   constructor(timeoutMs = 20000) {
@@ -141,7 +149,7 @@ class BatchProcessor {
   }
 
   addData(data) {
-    // Add all names to arrays (keeping duplicates)
+    // Add all names to arrays 
     if (data.employeeNames) {
         this.batch.employeeNames.push(...data.employeeNames);
     }
@@ -176,7 +184,6 @@ class BatchProcessor {
     const { count: empDupCount, names: empDupNames } = ETL.countDuplicates(this.batch.employeeNames);
     const { count: compDupCount, names: compDupNames } = ETL.countDuplicates(this.batch.companyNames);
 
-    // Match test case payload format exactly and include email
     const payload = {
       email: this.batch.email,
       employeeDuplicatesCount: empDupCount,
@@ -188,15 +195,36 @@ class BatchProcessor {
     console.log('Sending webhook payload:', JSON.stringify(payload, null, 2));
     
     try {
-      await sendTransformedDataWebhook(payload); 
+      await sendTransformedDataWebhook(payload);
+
+      // After successful send: remove all files written to UPLOAD_DIR
+      try {
+        const files = await fs.promises.readdir(UPLOAD_DIR);
+        for (const f of files) {
+          const fp = path.join(UPLOAD_DIR, f);
+          try {
+            await fs.promises.unlink(fp);
+            console.log('Deleted temp file:', fp);
+          } catch (e) {
+            console.warn('Failed to delete temp file:', fp, e?.message || e);
+          }
+        }
+      } catch (e) {
+        console.warn('Failed to list/clean upload dir', UPLOAD_DIR, e?.message || e);
+      }
+
+      // Clear all lists after successful webhook send
+      console.log('Clearing batch data...');
+      this.batch.employeeNames = [];
+      this.batch.companyNames = [];
+      this.batch.email = null;
+      console.log('Batch cleared. Current counts:', {
+        employeeNames: this.batch.employeeNames.length,
+        companyNames: this.batch.companyNames.length
+      });
     } catch (err) {
       console.error('Failed to send batch:', err);
     }
-
-    // Clear arrays after sending
-    this.batch.employeeNames = [];
-    this.batch.companyNames = [];
-    this.batch.email = null;
   }
 }
 
@@ -251,9 +279,9 @@ app.post('/submissions', verifySignature, async (req, res) => {
         if (!isPdf) continue
 
         try {
-          // Save file to disk (use runtime-writable upload dir)
-          const filepath = path.join(os.tmpdir(), filename);
-          await writeFileAsync(filepath, buf);
+          // Save file to disk in UPLOAD_DIR (use runtime-writable upload dir)
+          const filepath = path.join(UPLOAD_DIR, filename);
+           await writeFileAsync(filepath, buf);
           
           // Use OCR API instead of pdf-parse
           console.log('Starting OCR processing for:', filename);
@@ -271,7 +299,8 @@ app.post('/submissions', verifySignature, async (req, res) => {
 
           // Cleanup temp file
           try {
-            await unlink(filepath);
+            // individual file removal optional here; final cleanup happens after webhook send
+            await unlink(filepath).catch(()=>{});
           } catch (cleanupErr) {
             console.error('Failed to cleanup file:', filepath, cleanupErr);
           }

@@ -1,4 +1,4 @@
-// const input = {
+// const testInput = {
 //   "document": {
 //     "formatted": {
 //       "response": {
@@ -7,7 +7,43 @@
 //     }
 //   }
 // };
-const names = ['james', 'adam']
+
+// const testInput2 = {
+// "document_type": null,
+
+// "document": {
+
+// "value": {
+
+// "response": {
+
+// "value": "{\"employee_names\":\"LIM TAN, RYAN TIM,BRYAN LOW \",\"company_names\":\"CHARSLTON TECHNOLOGIES PTE LTD\"}",
+
+// "confidence": null
+
+// }
+
+// },
+
+// "confidence": null
+
+// },
+
+// "metadata": {
+
+// "processing_time_seconds": 8.713,
+
+// "file_size_mb": 0.192,
+
+// "page_count": 5,
+
+// "model": "vlm_rsn_v1"
+
+// }
+
+// };
+
+// const names = ['james', 'adam']
 
 function ETLfunc(ocrResponse) {
   const out = { employeeNames: [], companyNames: [] };
@@ -20,14 +56,14 @@ function ETLfunc(ocrResponse) {
   let payload = null;
 
   // Handle deeply nested response.value structure
-  if (ocrResponse?.document?.formatted?.response?.value) {
+  if (ocrResponse?.document?.value?.response?.value) {
     try {
-      payload = JSON.parse(ocrResponse.document.formatted.response.value);
+      payload = JSON.parse(ocrResponse.document.value.response.value);
     } catch (e) {
       console.error('Failed to parse response.value:', e);
       return out;
     }
-  } else if (ocrResponse?.formatted?.response?.value) {
+  } else if (ocrResponse?.value?.response?.value) {
     try {
       payload = JSON.parse(ocrResponse.formatted.response.value);
     } catch (e) {
@@ -110,7 +146,7 @@ if (require.main === module) {
   
   // Test ETL
   console.log('\nProcessing sample OCR response:');
-  const etlResult = ETLfunc(testInput);
+  const etlResult = ETLfunc(testInput2);
   console.log('Extracted names:', etlResult);
 
   // Test duplicate counting
